@@ -120,6 +120,9 @@ class WebRadioInterface : public RadioControllerInterface {
         // in decimal
         bool send_stream(Socket& s, const std::string& stream);
 
+
+        bool send_cached_stream(Socket& s, const std::string& stream, std::string& index);
+
         // Send the slide for the selected programme.
         // stream is a service id, either in hex with 0x prefix or
         // in decimal
@@ -142,6 +145,8 @@ class WebRadioInterface : public RadioControllerInterface {
 
         // Send the currently tuned channel
         bool send_channel(Socket& s);
+
+        bool send_buffered_audio_size(Socket& s, const std::string& stream);
 
         // Handle a POSTs
         bool handle_fft_window_placement_post(Socket& s, const std::string& request);

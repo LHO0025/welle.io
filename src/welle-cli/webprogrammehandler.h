@@ -32,7 +32,11 @@
 #include <chrono>
 #include <string>
 #include <atomic>
+#include <deque>
+#include <shared_mutex>
+#include "webprogrammehandler.h"
 
+class WebProgrammeHandler;
 class ProgrammeSender {
     private:
         Socket s;
@@ -43,10 +47,12 @@ class ProgrammeSender {
         bool headerSent = false;
 
     public:
+        size_t cached_mp3_index = 0;
         ProgrammeSender(Socket&& s);
         ProgrammeSender(ProgrammeSender&& other);
         ProgrammeSender& operator=(ProgrammeSender&& other);
         bool send_stream(const std::vector<uint8_t>& headerdata, const std::vector<uint8_t>& mp3data);
+        bool send_cached_stream(WebProgrammeHandler& webProgrammeHandler, ssize_t index);
         void wait_for_termination() const;
         void cancel();
 };
@@ -89,6 +95,8 @@ class WebProgrammeHandler : public ProgrammeHandlerInterface {
 
         mutable std::mutex stats_mutex;
 
+        mutable std::mutex cached_mp3_mutex;
+
         errorcounters_t errorcounters;
 
         bool last_label_valid = false;
@@ -107,6 +115,7 @@ class WebProgrammeHandler : public ProgrammeHandlerInterface {
         audiolevels_t audiolevels;
 
     public:
+        std::deque<uint8_t> audioBuffer;
         int rate = 0;
         std::string mode;
 
@@ -119,6 +128,8 @@ class WebProgrammeHandler : public ProgrammeHandlerInterface {
         bool needsToBeDecoded() const;
         void cancelAll();
         void send_to_all_clients(const std::vector<uint8_t>& headerData, const std::vector<uint8_t>& data);
+        void cache_mp3(const std::vector<uint8_t>& data);
+        std::vector<uint8_t> getAudioBufferChunk(size_t index);
 
         struct dls_t {
             std::string label;

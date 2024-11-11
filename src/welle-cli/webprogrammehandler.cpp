@@ -35,6 +35,9 @@ using namespace std;
 #define MSG_NOSIGNAL 0
 #endif
 
+constexpr size_t AUDIO_CHUNK_SIZE = 512;
+constexpr size_t MAX_AUDIO_BUFFER_SIZE = 57000000;
+
 class IEncoder 
 {
     public:
@@ -171,6 +174,8 @@ ProgrammeSender& ProgrammeSender::operator=(ProgrammeSender&& other)
     return *this;
 }
 
+
+// TODO mozna neposialt ten stream tak rychle ? dat tam nejaky sleep
 bool ProgrammeSender::send_stream(const std::vector<uint8_t>& headerdata, const std::vector<uint8_t>& mp3Data)
 {
     if (not s.valid()) {
@@ -188,15 +193,71 @@ bool ProgrammeSender::send_stream(const std::vector<uint8_t>& headerdata, const 
 
     ret = s.send(mp3Data.data(), mp3Data.size(), flags);
 
+    // std::cout << "Sent data size: " << mp3Data.size() << endl;
+    // std::cout << "Sent data: " << ret << endl;
+    // std::cout << endl;
+
     if (ret == -1) {
         s.close();
         std::unique_lock<std::mutex> lock(mutex);
         running = false;
         lock.unlock();
         cv.notify_all();
+        std::cout << "KONCIM POSILANI XXXXXXXXXXXXXX lalalalal 2" << endl;
         return false;
     }
 
+    return true;
+}
+
+bool ProgrammeSender::send_cached_stream(WebProgrammeHandler& webProgrammeHandler, ssize_t index) {
+    cached_mp3_index = webProgrammeHandler.audioBuffer.size() - index - 1;
+    
+    while(running) {
+        
+        if (not s.valid()) {
+            return false;
+        }
+
+        const int flags = MSG_NOSIGNAL;
+        ssize_t ret = 0;
+
+        // if (!headerSent)
+        // {
+        //  headerSent   ret = s.send(headerdata.data(), headerdata.size(), flags);
+        //      = true;
+        // }
+        std::vector<uint8_t> samples = webProgrammeHandler.getAudioBufferChunk(cached_mp3_index);
+        if(samples.size() != 0) {
+            cached_mp3_index += AUDIO_CHUNK_SIZE;
+            ret = s.send(samples.data(), samples.size(), flags);            
+        }
+
+
+        // std::cout << "value of return is " << ret << endl;
+
+
+        // if(counter > 200000) {
+
+        //     std::cout << "furt jedu!" << ret << endl;
+        //     counter = 0;
+        // }
+        // counter++;        // counter++;
+        if (ret == -1) {
+            s.close();
+            std::unique_lock<std::mutex> lock(mutex);
+            running = false;
+            lock.unlock();
+            cv.notify_all();
+            std::cout << "KONCIM POSILANI XXXXXXXXXXXXXX 2" << endl;
+            return false;
+        }
+
+        // this_thread::sleep_for(chrono::seconds(1));
+
+    }
+
+    std::cout << "KONCIM POSILANI XXXXXXXXXXXXXX 1" << endl;
     return true;
 }
 
@@ -268,6 +329,28 @@ void WebProgrammeHandler::cancelAll()
     for (auto& s : senders) {
         s->cancel();
     }
+}
+std::vector<uint8_t> WebProgrammeHandler::getAudioBufferChunk(size_t index)
+{
+    std::unique_lock<std::mutex> mp3_lock(cached_mp3_mutex);
+
+    if (index >= audioBuffer.size()) {
+        return {};  
+    }
+
+    size_t availableSamples = audioBuffer.size() - index;
+    if (availableSamples < AUDIO_CHUNK_SIZE) {
+        return {};
+    }
+
+    std::vector<uint8_t> samples;
+    samples.reserve(AUDIO_CHUNK_SIZE);
+
+    for (size_t i = 0; i < AUDIO_CHUNK_SIZE; ++i) {
+        samples.push_back(audioBuffer[index + i]);
+    }
+
+    return samples;
 }
 
 WebProgrammeHandler::dls_t WebProgrammeHandler::getDLS() const
@@ -388,6 +471,8 @@ void WebProgrammeHandler::send_to_all_clients(const std::vector<uint8_t>& header
             cerr << "Failed to send audio for " << serviceId << endl;
         }
     }
+
+    cache_mp3(data);
 }
 
 void WebProgrammeHandler::onRsErrors(bool uncorrectedErrors, int numCorrectedErrors)
@@ -447,3 +532,18 @@ void WebProgrammeHandler::onPADLengthError(size_t announced_xpad_len, size_t xpa
     xpad_error.xpad_len = xpad_len;
 }
 
+void WebProgrammeHandler::cache_mp3(const std::vector<uint8_t>& data) {
+    std::unique_lock<std::mutex> mp3_lock(cached_mp3_mutex);
+    for (uint8_t value : data) {
+        if(this->audioBuffer.size() >= MAX_AUDIO_BUFFER_SIZE) {
+            this->audioBuffer.pop_front();
+        }
+        this->audioBuffer.push_back(value);
+    }
+
+    for (auto& s : senders) {
+        if(s->cached_mp3_index >= data.size()) {
+            s->cached_mp3_index -= data.size();
+        }
+    }
+}

@@ -80,6 +80,7 @@
 
 constexpr size_t MAX_PENDING_MESSAGES = 512;
 
+
 using namespace std;
 
 static const char* http_ok = "HTTP/1.0 200 OK\r\n";
@@ -106,6 +107,8 @@ static const char* http_contenttype_html =
 
 static const char* http_nocache = "Cache-Control: no-cache\r\n";
 
+static const char* http_allow_origin = "Access-Control-Allow-Origin: *\r\n";
+
 static string to_hex(uint32_t value, int width)
 {
     std::stringstream sidstream;
@@ -119,6 +122,7 @@ static bool send_http_response(Socket& s, const string& statuscode,
         const string& data, const string& content_type = http_contenttype_text) {
     string headers = statuscode;
     headers += content_type;
+    headers += http_allow_origin;
     headers += http_nocache;
     headers += "\r\n";
     headers += data;
@@ -509,6 +513,31 @@ bool WebRadioInterface::dispatch_client(Socket&& client)
 
                 if (decode_settings.outputCodec == OutputCodec::MP3)
                 {
+
+                    const std::regex regex_buffered_audio_size(R"(^[/]buffer_size[/]([^ ]+))");
+                    std::smatch match_buffered_audio_size;
+                    if (regex_search(req.url, match_buffered_audio_size, regex_buffered_audio_size)) {
+                        cout << "jsem zde!" << endl;
+                        success = send_buffered_audio_size(s, match_buffered_audio_size[1]);
+                    } 
+
+                    const std::regex regex_cache_mp3(R"(^[/]cache_mp3[/]([^/]+)/([^/]+))");
+                    std::smatch match_cached_mp3;
+                    if (regex_search(req.url, match_cached_mp3, regex_cache_mp3)) {
+                        std::string ssid = match_cached_mp3[1];  // This will be the ssid
+                        std::string index = match_cached_mp3[2]; // This will be the index
+
+                        success = send_cached_stream(s, ssid, index);
+                    }
+
+                    // const std::regex regex_cache_mp3(R"(^[/]cache_mp3[/]([^ ]+))");
+                    // std::smatch match_cached_mp3;
+                    // if (regex_search(req.url, match_cached_mp3, regex_cache_mp3)) {
+                    //     success = send_cached_stream(s, match_cached_mp3[1]);
+                    // } 
+
+
+                    // TODO dat nejak do elsumatch_cached_mp3
                     const regex regex_mp3(R"(^[/]mp3[/]([^ ]+))");
                     std::smatch match_mp3;
                     if (regex_search(req.url, match_mp3, regex_mp3)) {
@@ -923,6 +952,73 @@ bool WebRadioInterface::send_stream(Socket& s, const std::string& stream)
     return false;
 }
 
+bool WebRadioInterface::send_cached_stream(Socket& s, const std::string& stream, string& index)
+{
+    unique_lock<mutex> lock(rx_mut);
+    ASSERT_RX;
+
+    // TODO ohandlovat chyby u stringu stoi nebo missing arguments !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    std::cout << "Sidddddddd: " << stream << endl;
+    for (const auto& srv : rx->getServiceList()) {
+        if (rx->serviceHasAudioComponent(srv) and
+                (to_hex(srv.serviceId, 4) == stream or
+                (uint32_t)std::stoul(stream) == srv.serviceId)) {
+            try {
+                std::cout << "Nalezeno" << endl;
+                auto& ph = phs.at(srv.serviceId);
+
+                lock.unlock();
+
+                std::string http_contenttype;
+
+                switch (decode_settings.outputCodec)
+                {
+                case OutputCodec::FLAC:
+                    http_contenttype = http_contenttype_flac;
+                    break;
+                case OutputCodec::MP3:
+                    http_contenttype = http_contenttype_mp3;
+                    break;
+                default:
+                    break;
+                }
+
+                if (not send_http_response(s, http_ok, "", http_contenttype)) {
+                    cerr << "Failed to send mp3 headers" << endl;
+                    return false;
+                }
+
+
+                ProgrammeSender sender(move(s));
+                check_decoders_required();
+                sender.send_cached_stream(ph, stoi(index));
+                std::cout << "KONCIM POSILANI XXXXXXXXXXXXXX 666" << endl;
+                // ProgrammeSender sender(move(s));
+
+                // cerr << "Registering mp3 sender" << endl;
+                // ph.registerSender(&sender);
+                // check_decoders_required();
+                // sender.wait_for_termination();
+
+                // cerr << "Removing mp3 sender" << endl;
+                // ph.removeSender(&sender);
+                // check_decoders_required();
+
+                // return true;
+            }
+            catch (const out_of_range& e) {
+                cerr << "Could not setup mp3 sender for " <<
+                    srv.serviceId << ": " << e.what() << endl;
+                std::cout << "PADAM DO CATCHEEEEEEEEEEEEEEEEEEEEEEE" << endl;
+                send_http_response(s, http_503, e.what());
+                return false;
+            }
+        }
+    }
+    std::cout << "Nepadam nikde" << endl;
+    return false;
+}
+
 bool WebRadioInterface::send_slide(Socket& s, const std::string& stream)
 {
     for (const auto& wph : phs) {
@@ -1156,6 +1252,45 @@ bool WebRadioInterface::send_channel(Socket& s)
     return true;
 }
 
+bool WebRadioInterface::send_buffered_audio_size(Socket& s, const std::string& stream) {
+    unique_lock<mutex> lock(rx_mut);
+    ASSERT_RX;
+    for (const auto& srv : rx->getServiceList()) {
+        if (rx->serviceHasAudioComponent(srv) and
+                (to_hex(srv.serviceId, 4) == stream or
+                (uint32_t)std::stoul(stream) == srv.serviceId)) {
+            try {
+                auto& ph = phs.at(srv.serviceId);
+
+                lock.unlock();
+
+                string response = http_ok;
+                response += http_allow_origin;
+                response += http_contenttype_json;
+                response += http_nocache;
+                response += "\r\n";
+                response += "{ \"bufferSize\": " + to_string(ph.audioBuffer.size()) + " }";
+                ssize_t ret = s.send(response.data(), response.size(), MSG_NOSIGNAL);
+                if (ret == -1) {
+                    cerr << "Failed to send buffered audio size" << endl;
+                    return false;
+                }              
+
+                return true;
+            }
+            catch (const out_of_range& e) {
+                cerr << "Could not setup mp3 sender for " <<
+                    srv.serviceId << ": " << e.what() << endl;
+
+                send_http_response(s, http_503, e.what());
+                return false;
+            }
+        }
+    }
+
+    return false;
+}
+
 bool WebRadioInterface::handle_fft_window_placement_post(Socket& s, const std::string& fft_window_placement)
 {
     cerr << "POST fft window: " << fft_window_placement << endl;
@@ -1268,7 +1403,6 @@ void WebRadioInterface::handle_phs()
 {
     while (running) {
         this_thread::sleep_for(chrono::seconds(2));
-
         unique_lock<mutex> lock(rx_mut);
         ASSERT_RX;
 
