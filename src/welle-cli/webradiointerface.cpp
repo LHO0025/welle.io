@@ -1048,6 +1048,7 @@ bool WebRadioInterface::send_slide(Socket& s, const std::string& stream)
             }
             headers << "\r\n";
 
+            headers << http_allow_origin;
             headers << http_nocache;
 
             headers << "Last-Modified: ";
