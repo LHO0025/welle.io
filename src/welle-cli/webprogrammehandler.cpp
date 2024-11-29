@@ -36,7 +36,7 @@ using namespace std;
 #endif
 
 constexpr size_t AUDIO_CHUNK_SIZE = 512;
-constexpr size_t MAX_AUDIO_BUFFER_SIZE = 57000000;
+constexpr size_t MAX_AUDIO_BUFFER_SIZE = 1260000;
 
 class IEncoder 
 {
@@ -211,53 +211,37 @@ bool ProgrammeSender::send_stream(const std::vector<uint8_t>& headerdata, const 
 }
 
 bool ProgrammeSender::send_cached_stream(WebProgrammeHandler& webProgrammeHandler, ssize_t index) {
+    cout << "INDEX ISSSSSSSSSSSSSSS" << index << endl;
+    cout << "AUDIO BUFFER " << webProgrammeHandler.audioBuffer.size() << endl;
     cached_mp3_index = webProgrammeHandler.audioBuffer.size() - index - 1;
-    
-    while(running) {
-        
+    cout << "CACHED MP3 INDEX" << cached_mp3_index << endl;
+    while(running) {        
         if (not s.valid()) {
             return false;
         }
-
+        cout << "Index size" << cached_mp3_index << endl;
         const int flags = MSG_NOSIGNAL;
         ssize_t ret = 0;
 
-        // if (!headerSent)
-        // {
-        //  headerSent   ret = s.send(headerdata.data(), headerdata.size(), flags);
-        //      = true;
-        // }
         std::vector<uint8_t> samples = webProgrammeHandler.getAudioBufferChunk(cached_mp3_index);
         if(samples.size() != 0) {
             cached_mp3_index += AUDIO_CHUNK_SIZE;
             ret = s.send(samples.data(), samples.size(), flags);            
         }
 
-
-        // std::cout << "value of return is " << ret << endl;
-
-
-        // if(counter > 200000) {
-
-        //     std::cout << "furt jedu!" << ret << endl;
-        //     counter = 0;
-        // }
-        // counter++;        // counter++;
         if (ret == -1) {
             s.close();
             std::unique_lock<std::mutex> lock(mutex);
             running = false;
             lock.unlock();
             cv.notify_all();
-            std::cout << "KONCIM POSILANI XXXXXXXXXXXXXX 2" << endl;
             return false;
         }
 
-        // this_thread::sleep_for(chrono::seconds(1));
-
+        // TODO mozna uspat vlakno at to neposila tak rychle
+        // this_thread::sleep_for(chrono::milliseconds(1000));
     }
 
-    std::cout << "KONCIM POSILANI XXXXXXXXXXXXXX 1" << endl;
     return true;
 }
 
@@ -534,6 +518,7 @@ void WebProgrammeHandler::onPADLengthError(size_t announced_xpad_len, size_t xpa
 
 void WebProgrammeHandler::cache_mp3(const std::vector<uint8_t>& data) {
     std::unique_lock<std::mutex> mp3_lock(cached_mp3_mutex);
+
     for (uint8_t value : data) {
         if(this->audioBuffer.size() >= MAX_AUDIO_BUFFER_SIZE) {
             this->audioBuffer.pop_front();
@@ -542,7 +527,7 @@ void WebProgrammeHandler::cache_mp3(const std::vector<uint8_t>& data) {
     }
 
     for (auto& s : senders) {
-        if(s->cached_mp3_index >= data.size()) {
+        if(s->cached_mp3_index - data.size() > 0) {
             s->cached_mp3_index -= data.size();
         }
     }

@@ -990,9 +990,17 @@ bool WebRadioInterface::send_cached_stream(Socket& s, const std::string& stream,
 
 
                 ProgrammeSender sender(move(s));
+
+                cerr << "Registering cached mp3 sender" << endl;
+                ph.registerSender(&sender);
                 check_decoders_required();
+
                 sender.send_cached_stream(ph, stoi(index));
-                std::cout << "KONCIM POSILANI XXXXXXXXXXXXXX 666" << endl;
+                
+                cerr << "Removing mp3 sender" << endl;
+                ph.removeSender(&sender);
+                check_decoders_required();
+
                 // ProgrammeSender sender(move(s));
 
                 // cerr << "Registering mp3 sender" << endl;
