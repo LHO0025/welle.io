@@ -35,8 +35,8 @@ using namespace std;
 #define MSG_NOSIGNAL 0
 #endif
 
-constexpr size_t AUDIO_CHUNK_SIZE = 512;
-constexpr size_t MAX_AUDIO_BUFFER_SIZE = 1260000;
+constexpr int AUDIO_CHUNK_SIZE = 5000;
+constexpr int MAX_AUDIO_BUFFER_SIZE = 12600000;
 
 class IEncoder 
 {
@@ -203,7 +203,6 @@ bool ProgrammeSender::send_stream(const std::vector<uint8_t>& headerdata, const 
         running = false;
         lock.unlock();
         cv.notify_all();
-        std::cout << "KONCIM POSILANI XXXXXXXXXXXXXX lalalalal 2" << endl;
         return false;
     }
 
@@ -211,39 +210,74 @@ bool ProgrammeSender::send_stream(const std::vector<uint8_t>& headerdata, const 
 }
 
 bool ProgrammeSender::send_cached_stream(WebProgrammeHandler& webProgrammeHandler, ssize_t index) {
-    cout << "INDEX ISSSSSSSSSSSSSSS" << index << endl;
-    cout << "AUDIO BUFFER " << webProgrammeHandler.audioBuffer.size() << endl;
-    cached_mp3_index = webProgrammeHandler.audioBuffer.size() - index - 1;
-    cout << "CACHED MP3 INDEX" << cached_mp3_index << endl;
-    while(running) {        
-        if (not s.valid()) {
+ cached_mp3_index = webProgrammeHandler.audioBuffer.size() - index - 1;
+
+    while (running) {
+        if (!s.valid()) {
             return false;
         }
-        cout << "Index size" << cached_mp3_index << endl;
+
         const int flags = MSG_NOSIGNAL;
         ssize_t ret = 0;
 
         std::vector<uint8_t> samples = webProgrammeHandler.getAudioBufferChunk(cached_mp3_index);
-        if(samples.size() != 0) {
+        if (static_cast<int>(samples.size()) == AUDIO_CHUNK_SIZE) {
             cached_mp3_index += AUDIO_CHUNK_SIZE;
-            ret = s.send(samples.data(), samples.size(), flags);            
-        }
+            ret = s.send(samples.data(), samples.size(), flags);
+        } 
 
         if (ret == -1) {
             s.close();
-            std::unique_lock<std::mutex> lock(mutex);
-            running = false;
-            lock.unlock();
+            {
+                std::unique_lock<std::mutex> lock(mutex);
+                running = false;
+            }
             cv.notify_all();
             return false;
         }
 
-        // TODO mozna uspat vlakno at to neposila tak rychle
-        // this_thread::sleep_for(chrono::milliseconds(1000));
     }
 
     return true;
 }
+
+// void WebProgrammeHandler::cache_mp3(const std::vector<uint8_t>& data) {
+//       std::unique_lock<std::mutex> mp3_lock(cached_mp3_mutex);
+//     // std::unique_lock<std::mutex> audio_buffer_lock(audio_buffer_mutex);
+
+//     for (uint8_t value : data) {
+//         if (this->audioBuffer.size() >= MAX_AUDIO_BUFFER_SIZE) {
+//             this->audioBuffer.pop_front();
+//         }
+//         this->audioBuffer.push_back(value);
+//     }
+
+//     for (auto& s : senders) {
+//         if (!s->isLive && s->cached_mp3_index - static_cast<int>(data.size()) > 0) {
+//             s->cached_mp3_index -= static_cast<int>(data.size());
+//         }
+//     }
+// }
+
+void WebProgrammeHandler::cache_mp3(const std::vector<uint8_t>& data) {
+    std::unique_lock<std::mutex> mp3_lock(cached_mp3_mutex);
+    int removed = 0;
+    for (uint8_t value : data) {
+        if (this->audioBuffer.size() >= MAX_AUDIO_BUFFER_SIZE) {
+            this->audioBuffer.pop_front();
+            ++removed;
+        }
+        this->audioBuffer.push_back(value);
+    }
+    for (auto& s : senders) {
+        if (!s->isLive) {
+            // Subtract only the number of samples actually removed, 
+            // ensuring we don’t underflow.
+            s->cached_mp3_index = std::max(0, s->cached_mp3_index - removed);
+        }
+    }
+}
+
 
 void ProgrammeSender::wait_for_termination() const
 {
@@ -314,15 +348,15 @@ void WebProgrammeHandler::cancelAll()
         s->cancel();
     }
 }
-std::vector<uint8_t> WebProgrammeHandler::getAudioBufferChunk(size_t index)
+std::vector<uint8_t> WebProgrammeHandler::getAudioBufferChunk(int index)
 {
     std::unique_lock<std::mutex> mp3_lock(cached_mp3_mutex);
 
-    if (index >= audioBuffer.size()) {
+    if (index >= static_cast<int>(audioBuffer.size())) {
         return {};  
     }
 
-    size_t availableSamples = audioBuffer.size() - index;
+    int availableSamples = static_cast<int>(audioBuffer.size()) - index;
     if (availableSamples < AUDIO_CHUNK_SIZE) {
         return {};
     }
@@ -330,7 +364,7 @@ std::vector<uint8_t> WebProgrammeHandler::getAudioBufferChunk(size_t index)
     std::vector<uint8_t> samples;
     samples.reserve(AUDIO_CHUNK_SIZE);
 
-    for (size_t i = 0; i < AUDIO_CHUNK_SIZE; ++i) {
+    for (int i = 0; i < AUDIO_CHUNK_SIZE; ++i) {
         samples.push_back(audioBuffer[index + i]);
     }
 
@@ -450,13 +484,17 @@ void WebProgrammeHandler::send_to_all_clients(const std::vector<uint8_t>& header
     std::unique_lock<std::mutex> lock(senders_mutex);
 
     for (auto& s : senders) {
-        bool success = s->send_stream(headerData, data);
-        if (not success) {
-            cerr << "Failed to send audio for " << serviceId << endl;
+        if(s->isLive){
+            std::cout << "KEKWWW" << endl;
+            bool success = s->send_stream(headerData, data);
+            if (not success) {
+                cerr << "Failed to send audio for " << serviceId << endl;
+            }
         }
     }
 
     cache_mp3(data);
+    cache_dls_data();
 }
 
 void WebProgrammeHandler::onRsErrors(bool uncorrectedErrors, int numCorrectedErrors)
@@ -516,19 +554,31 @@ void WebProgrammeHandler::onPADLengthError(size_t announced_xpad_len, size_t xpa
     xpad_error.xpad_len = xpad_len;
 }
 
-void WebProgrammeHandler::cache_mp3(const std::vector<uint8_t>& data) {
-    std::unique_lock<std::mutex> mp3_lock(cached_mp3_mutex);
+void WebProgrammeHandler::cache_dls_data() {
+    const auto dlsData = getDLS();
+    // chrono::system_clock::to_time_t(dlsData.time);
+    dls_buffer_record record{dlsData.label, std::chrono::system_clock::now()};
+    this->dlsDataBuffer.push_back(record);
+    // std::cout << std::chrono::system_clock::to_time_t(std::chrono::system_clock::now()) << endl;
+}
 
-    for (uint8_t value : data) {
-        if(this->audioBuffer.size() >= MAX_AUDIO_BUFFER_SIZE) {
-            this->audioBuffer.pop_front();
-        }
-        this->audioBuffer.push_back(value);
+std::string WebProgrammeHandler::findClosestLabel(std::chrono::time_point<std::chrono::system_clock> targetTime) {
+    if (dlsDataBuffer.empty()) {
+        std::cout << "SDASDASDAS" << endl;\
+        std::cout << this->dlsDataBuffer.size() << endl;
+        return ""; // Return empty string if buffer is empty
     }
-
-    for (auto& s : senders) {
-        if(s->cached_mp3_index - data.size() > 0) {
-            s->cached_mp3_index -= data.size();
+    
+    auto closest = dlsDataBuffer.begin();
+    auto minDiff = std::chrono::duration<double>::max();
+    
+    for (auto it = dlsDataBuffer.begin(); it != dlsDataBuffer.end(); ++it) {
+        auto diff = std::chrono::duration_cast<std::chrono::duration<double>>(it->time - targetTime);
+        if (std::abs(diff.count()) < minDiff.count()) {
+            minDiff = diff;
+            closest = it;
         }
     }
+    
+    return closest->label;
 }

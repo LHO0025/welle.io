@@ -508,11 +508,22 @@ bool WebRadioInterface::dispatch_client(Socket&& client)
                 const regex regex_stream(R"(^[/]stream[/]([^ ]+))");
                 std::smatch match_stream;
                 if (regex_search(req.url, match_stream, regex_stream)) {
+                    std::cout << "ZZZZZZZZZZZZZZZZZZZZZZZZZZZZ" << endl;
                     success = send_stream(s, match_stream[1]);
                 }
 
                 if (decode_settings.outputCodec == OutputCodec::MP3)
                 {
+
+                    // const std::regex regex_buffered_dls_data(R"(^[/]?buffered_dls_data[/]([^/]+)[/](\d+))");
+                    // std::smatch match_buffered_dls_data;
+                    // if (regex_search(req.url, match_buffered_dls_data, regex_buffered_dls_data)) {
+                    //     cout << "AAAAAAAAAAAAAA 1 " << match_buffered_dls_data[1] << endl;
+                    //     cout << "AAAAAAAAAAAAAA 2 " << match_buffered_dls_data[2] << endl;
+                    //     std::chrono::time_point<std::chrono::system_clock> time_point = std::chrono::system_clock::from_time_t(stoi(match_buffered_dls_data[2]));
+                    //     success = send_cached_dls_data(s, match_buffered_dls_data[1], time_point);
+                    // } 
+
 
                     const std::regex regex_buffered_audio_size(R"(^[/]buffer_size[/]([^ ]+))");
                     std::smatch match_buffered_audio_size;
@@ -990,8 +1001,8 @@ bool WebRadioInterface::send_cached_stream(Socket& s, const std::string& stream,
 
 
                 ProgrammeSender sender(move(s));
-
-                cerr << "Registering cached mp3 sender" << endl;
+                sender.isLive = false;
+                // cerr << "Registering cached mp3 sender" << endl;
                 ph.registerSender(&sender);
                 check_decoders_required();
 
@@ -1017,7 +1028,6 @@ bool WebRadioInterface::send_cached_stream(Socket& s, const std::string& stream,
             catch (const out_of_range& e) {
                 cerr << "Could not setup mp3 sender for " <<
                     srv.serviceId << ": " << e.what() << endl;
-                std::cout << "PADAM DO CATCHEEEEEEEEEEEEEEEEEEEEEEE" << endl;
                 send_http_response(s, http_503, e.what());
                 return false;
             }
@@ -1282,6 +1292,48 @@ bool WebRadioInterface::send_buffered_audio_size(Socket& s, const std::string& s
                 ssize_t ret = s.send(response.data(), response.size(), MSG_NOSIGNAL);
                 if (ret == -1) {
                     cerr << "Failed to send buffered audio size" << endl;
+                    return false;
+                }              
+
+                return true;
+            }
+            catch (const out_of_range& e) {
+                cerr << "Could not setup mp3 sender for " <<
+                    srv.serviceId << ": " << e.what() << endl;
+
+                send_http_response(s, http_503, e.what());
+                return false;
+            }
+        }
+    }
+
+    return false;
+}
+
+bool WebRadioInterface::send_cached_dls_data(Socket& s, const std::string& stream, std::chrono::time_point<std::chrono::system_clock> targetTime) {
+    unique_lock<mutex> lock(rx_mut);
+    ASSERT_RX;
+    for (const auto& srv : rx->getServiceList()) {
+        if (rx->serviceHasAudioComponent(srv) and
+                (to_hex(srv.serviceId, 4) == stream or
+                (uint32_t)std::stoul(stream) == srv.serviceId)) {
+            try {
+                auto& ph = phs.at(srv.serviceId);
+
+                lock.unlock();
+
+                string label = ph.findClosestLabel(targetTime);
+                std::cout << "ooooooooooooo" << label << endl;
+
+                string response = http_ok;
+                response += http_allow_origin;
+                response += http_contenttype_json;
+                response += http_nocache;
+                response += "\r\n";
+                response += "{ \"data\": " + label + " }";
+                ssize_t ret = s.send(response.data(), response.size(), MSG_NOSIGNAL);
+                if (ret == -1) {
+                    cerr << "Failed to send dls data" << endl;
                     return false;
                 }              
 

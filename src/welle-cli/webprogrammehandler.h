@@ -47,7 +47,8 @@ class ProgrammeSender {
         bool headerSent = false;
 
     public:
-        size_t cached_mp3_index = 0;
+        bool isLive = true;
+        int cached_mp3_index = 0;
         ProgrammeSender(Socket&& s);
         ProgrammeSender(ProgrammeSender&& other);
         ProgrammeSender& operator=(ProgrammeSender&& other);
@@ -85,6 +86,10 @@ class WebProgrammeHandler : public ProgrammeHandlerInterface {
             size_t num_rsErrors = 0;
             size_t num_aacErrors = 0;
         };
+
+        mutable std::mutex cached_mp3_mutex;
+        mutable std::mutex audio_buffer_mutex;
+
     private:
         uint32_t serviceId;
         const OutputCodec codec;
@@ -94,8 +99,6 @@ class WebProgrammeHandler : public ProgrammeHandlerInterface {
         std::list<ProgrammeSender*> senders;
 
         mutable std::mutex stats_mutex;
-
-        mutable std::mutex cached_mp3_mutex;
 
         errorcounters_t errorcounters;
 
@@ -129,13 +132,22 @@ class WebProgrammeHandler : public ProgrammeHandlerInterface {
         void cancelAll();
         void send_to_all_clients(const std::vector<uint8_t>& headerData, const std::vector<uint8_t>& data);
         void cache_mp3(const std::vector<uint8_t>& data);
-        std::vector<uint8_t> getAudioBufferChunk(size_t index);
-
+        std::vector<uint8_t> getAudioBufferChunk(int);
         struct dls_t {
             std::string label;
             std::chrono::time_point<std::chrono::system_clock> time;
             std::chrono::time_point<std::chrono::system_clock> last_changed; };
         dls_t getDLS() const;
+
+        struct dls_buffer_record {
+            std::string label;
+            std::chrono::time_point<std::chrono::system_clock> time;
+        };
+
+        std::deque<dls_buffer_record> dlsDataBuffer;
+        
+        std::string findClosestLabel(std::chrono::time_point<std::chrono::system_clock> targetTime);
+        void cache_dls_data();
 
         struct mot_t {
             std::vector<uint8_t> data;
