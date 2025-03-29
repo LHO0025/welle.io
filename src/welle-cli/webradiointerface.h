@@ -120,17 +120,20 @@ class WebRadioInterface : public RadioControllerInterface {
         // in decimal
         bool send_stream(Socket& s, const std::string& stream);
 
-        bool send_cached_stream(Socket& s, const std::string& stream, std::string& index);
+        bool send_buffered_stream(Socket& s, const std::string& stream, const std::string& offsetMsStr);
 
         // Send the slide for the selected programme.
         // stream is a service id, either in hex with 0x prefix or
         // in decimal
         bool send_slide(Socket& s, const std::string& stream);
+        bool send_buffered_slide(Socket& s, const std::string& stream, const std::string& timestamp);
 
         // Send the Fast Information Channel as a stream.
         // Every FIB is 32 bytes long, there three FIBs per 24ms interval,
         // which gives 32000 bits/s
         bool send_fic(Socket& s);
+
+        bool send_buffered_dls(Socket& s, const std::string& stream, const std::string& timestamp);
 
         // Send the impulse response, in dB, as a sequence of float values.
         bool send_impulseresponse(Socket& s);
@@ -155,6 +158,8 @@ class WebRadioInterface : public RadioControllerInterface {
 
         // Handle a POST to /channel that will tune the receiver
         bool handle_channel_post(Socket& s, const std::string& request);
+
+        void cache_dls_data();
 
         void handle_phs();
         void check_decoders_required();

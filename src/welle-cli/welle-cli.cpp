@@ -675,7 +675,7 @@ int main(int argc, char **argv)
             }
         }
         else {
-#if defined(HAVE_ALSA)
+        #if defined(HAVE_ALSA)
             AlsaProgrammeHandler ph;
             while (not service_to_tune.empty()) {
                 cerr << "Service list" << endl;

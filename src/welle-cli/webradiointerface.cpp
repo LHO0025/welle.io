@@ -38,6 +38,9 @@
 #include <regex>
 #include <signal.h>
 #include <stdexcept>
+#include <string>
+#include <chrono>
+#include <stdexcept>
 
 #if defined(_WIN32)
  #include <winsock2.h>
@@ -505,40 +508,31 @@ bool WebRadioInterface::dispatch_client(Socket&& client)
                 const regex regex_slide(R"(^[/]slide[/]([^ ]+))");
                 std::smatch match_slide;
 
+                const std::regex regex_buffered_slide(R"(^/buffered_slide\?sid=([^&]+)&timestamp=([^&]+)$)");
+                std::smatch match_buffered_slide;
+
+                const std::regex regex_buffered_dls(R"(^/buffered_dls\?sid=([^&]+)&timestamp=([^&]+)$)");
+                std::smatch match_buffered_dls;
+
                 const regex regex_stream(R"(^[/]stream[/]([^ ]+))");
                 std::smatch match_stream;
                 if (regex_search(req.url, match_stream, regex_stream)) {
-                    std::cout << "ZZZZZZZZZZZZZZZZZZZZZZZZZZZZ" << endl;
                     success = send_stream(s, match_stream[1]);
                 }
 
                 if (decode_settings.outputCodec == OutputCodec::MP3)
                 {
 
-                    // const std::regex regex_buffered_dls_data(R"(^[/]?buffered_dls_data[/]([^/]+)[/](\d+))");
-                    // std::smatch match_buffered_dls_data;
-                    // if (regex_search(req.url, match_buffered_dls_data, regex_buffered_dls_data)) {
-                    //     cout << "AAAAAAAAAAAAAA 1 " << match_buffered_dls_data[1] << endl;
-                    //     cout << "AAAAAAAAAAAAAA 2 " << match_buffered_dls_data[2] << endl;
-                    //     std::chrono::time_point<std::chrono::system_clock> time_point = std::chrono::system_clock::from_time_t(stoi(match_buffered_dls_data[2]));
-                    //     success = send_cached_dls_data(s, match_buffered_dls_data[1], time_point);
-                    // } 
-
-
                     const std::regex regex_buffered_audio_size(R"(^[/]buffer_size[/]([^ ]+))");
                     std::smatch match_buffered_audio_size;
                     if (regex_search(req.url, match_buffered_audio_size, regex_buffered_audio_size)) {
-                        cout << "jsem zde!" << endl;
                         success = send_buffered_audio_size(s, match_buffered_audio_size[1]);
                     } 
 
-                    const std::regex regex_cache_mp3(R"(^[/]cache_mp3[/]([^/]+)/([^/]+))");
-                    std::smatch match_cached_mp3;
-                    if (regex_search(req.url, match_cached_mp3, regex_cache_mp3)) {
-                        std::string ssid = match_cached_mp3[1];  // This will be the ssid
-                        std::string index = match_cached_mp3[2]; // This will be the index
-
-                        success = send_cached_stream(s, ssid, index);
+                    const std::regex regex_buffered_mp3(R"(^/buffered_mp3\?sid=([^&]+)&offsetMs=([^&]+)$)");
+                    std::smatch match_buffered_mp3;
+                    if (regex_search(req.url, match_buffered_mp3, regex_buffered_mp3)) {
+                        success = send_buffered_stream(s, match_buffered_mp3[1], match_buffered_mp3[2]);
                     }
 
                     // const std::regex regex_cache_mp3(R"(^[/]cache_mp3[/]([^ ]+))");
@@ -563,10 +557,14 @@ bool WebRadioInterface::dispatch_client(Socket&& client)
                     if (regex_search(req.url, match_flac, regex_flac)) {
                         success = send_stream(s, match_flac[1]);
                     }
-                }
-
+                } 
+                
                 else if (regex_search(req.url, match_slide, regex_slide)) {
                     success = send_slide(s, match_slide[1]);
+                } else if(regex_search(req.url, match_buffered_slide, regex_buffered_slide)) {
+                    success = send_buffered_slide(s, match_buffered_slide[1], match_buffered_slide[2]);
+                } else if(regex_search(req.url, match_buffered_dls, regex_buffered_dls)) {
+                    success = send_buffered_dls(s, match_buffered_dls[1], match_buffered_dls[2]);
                 }
                 else {
                     cerr << "Could not understand GET request " << req.url << endl;
@@ -963,20 +961,31 @@ bool WebRadioInterface::send_stream(Socket& s, const std::string& stream)
     return false;
 }
 
-bool WebRadioInterface::send_cached_stream(Socket& s, const std::string& stream, string& index)
+const int MAX_BUFFER_TIME_MS = 50000; 
+
+
+bool WebRadioInterface::send_buffered_stream(Socket& s, const std::string& stream, const std::string& offsetMsStr)
 {
+
     unique_lock<mutex> lock(rx_mut);
     ASSERT_RX;
 
-    // TODO ohandlovat chyby u stringu stoi nebo missing arguments !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    std::cout << "Sidddddddd: " << stream << endl;
-    for (const auto& srv : rx->getServiceList()) {
-        if (rx->serviceHasAudioComponent(srv) and
-                (to_hex(srv.serviceId, 4) == stream or
-                (uint32_t)std::stoul(stream) == srv.serviceId)) {
-            try {
-                std::cout << "Nalezeno" << endl;
+    try {
+        for (const auto& srv : rx->getServiceList()) {
+            if (rx->serviceHasAudioComponent(srv) and
+                    (to_hex(srv.serviceId, 4) == stream or
+                    (uint32_t)std::stoul(stream) == srv.serviceId)) {
+
                 auto& ph = phs.at(srv.serviceId);
+
+
+                cout << "AAAAAAAAAAA RATE" << ph.rate << endl;
+                // double offsetSeconds = std::stod(offsetMsStr) / 1000;
+                // long long index = offsetSeconds * (ph.rate / 2); 
+
+                double offsetSeconds = std::stod(offsetMsStr) / 1000;
+                double index = offsetSeconds * (ph.rate / 2);
+                long long preciseIndex = std::round(index);
 
                 lock.unlock();
 
@@ -999,41 +1008,28 @@ bool WebRadioInterface::send_cached_stream(Socket& s, const std::string& stream,
                     return false;
                 }
 
-
                 ProgrammeSender sender(move(s));
                 sender.isLive = false;
-                // cerr << "Registering cached mp3 sender" << endl;
+
                 ph.registerSender(&sender);
                 check_decoders_required();
 
-                sender.send_cached_stream(ph, stoi(index));
+
+                cout << "indexxxxxxxxxxxxxxxx " << index << endl;
+                sender.send_cached_stream(ph, preciseIndex);
                 
-                cerr << "Removing mp3 sender" << endl;
                 ph.removeSender(&sender);
                 check_decoders_required();
 
-                // ProgrammeSender sender(move(s));
-
-                // cerr << "Registering mp3 sender" << endl;
-                // ph.registerSender(&sender);
-                // check_decoders_required();
-                // sender.wait_for_termination();
-
-                // cerr << "Removing mp3 sender" << endl;
-                // ph.removeSender(&sender);
-                // check_decoders_required();
-
-                // return true;
-            }
-            catch (const out_of_range& e) {
-                cerr << "Could not setup mp3 sender for " <<
-                    srv.serviceId << ": " << e.what() << endl;
-                send_http_response(s, http_503, e.what());
-                return false;
+                return true;
             }
         }
+        
+    } catch (const std::exception& e) {
+        send_http_response(s, http_503, e.what());
+        return true;
     }
-    std::cout << "Nepadam nikde" << endl;
+
     return false;
 }
 
@@ -1087,6 +1083,146 @@ bool WebRadioInterface::send_slide(Socket& s, const std::string& stream)
 
             return true;
         }
+    }
+    return false;
+}
+
+bool WebRadioInterface::send_buffered_slide(Socket& s, const std::string& stream, const std::string& timestamp_str)
+{
+   try {
+        long long timestamp = std::stoll(timestamp_str);
+        std::chrono::time_point<std::chrono::system_clock> targetTime = std::chrono::system_clock::from_time_t(timestamp);
+
+        for (const auto& wph : phs) {
+            if (to_hex(wph.first, 4) == stream or
+                    (uint32_t)std::stoul(stream) == wph.first) {
+                
+                auto& mot_buffer = wph.second.mot_buffer;
+
+                if(mot_buffer.empty()) {
+                    send_http_response(s, http_404, "404 Not Found\r\nSlide buffer is empty\r\n");
+                    return true;
+                }
+
+                // TODO maybe add something for race condition ????? 
+                auto& first = wph.second.mot_buffer.front();
+                auto& last = wph.second.mot_buffer.back();
+
+                WebProgrammeHandler::mot_t last_mot = first;
+                for (auto& mot: mot_buffer) {
+                    if(mot.time > targetTime) {
+                        break;
+                    } else {
+                        last_mot = mot;
+                    }
+                }
+                
+                stringstream headers;
+                headers << http_ok;
+
+                headers << "Content-Type: ";
+                switch (last_mot.subtype) {
+                    case MOTType::Unknown:
+                        headers << "application/octet-stream";
+                        break;
+                    case MOTType::JPEG:
+                        headers << "image/jpeg";
+                        break;
+                    case MOTType::PNG:
+                        headers << "image/png";
+                        break;
+                }
+                headers << "\r\n";
+
+                headers << http_allow_origin;
+                headers << http_nocache;
+
+                headers << "Last-Modified: ";
+                std::time_t t = chrono::system_clock::to_time_t(last_mot.time);
+                headers << put_time(std::gmtime(&t), "%a, %d %b %Y %T GMT");
+                headers << "\r\n";
+
+                headers << "\r\n";
+                const auto headers_str = headers.str();
+                int ret = s.send(headers_str.data(), headers_str.size(), MSG_NOSIGNAL);
+                if (ret == (ssize_t)headers_str.size()) {
+                    ret = s.send(last_mot.data.data(), last_mot.data.size(), MSG_NOSIGNAL);
+                }
+
+                if (ret == -1) {
+                    cerr << "Failed to send slide" << endl;
+                }
+
+                return true;
+            }
+        }
+
+    } catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << std::endl;
+        send_http_response(s, http_503, e.what());
+        return true;
+    }
+    return false;
+}
+
+bool WebRadioInterface::send_buffered_dls(Socket& s, const std::string& stream, const std::string& timestamp_str)
+{
+    try {
+        unique_lock<mutex> lock(rx_mut);
+        ASSERT_RX;
+
+        long long timestamp = std::stoll(timestamp_str);
+        std::chrono::time_point<std::chrono::system_clock> targetTime = std::chrono::system_clock::from_time_t(timestamp);
+
+        for (const auto& srv : rx->getServiceList()) {
+            if (rx->serviceHasAudioComponent(srv) and
+                    (to_hex(srv.serviceId, 4) == stream or
+                    (uint32_t)std::stoul(stream) == srv.serviceId)) {
+
+                auto& ph = phs.at(srv.serviceId);
+                lock.unlock();
+
+                // TODO maybe add something for race condition ????? 
+                auto& dls_buffer = ph.dls_buffer;
+
+                if(dls_buffer.empty()) {
+                    send_http_response(s, http_404, "404 Not Found\r\nDLS buffer is empty\r\n");
+                    return true;
+                }
+
+                auto& first = dls_buffer.front();
+                auto& last = dls_buffer.back();
+
+                WebProgrammeHandler::dls_t last_dls = first;
+                for (auto& dls: dls_buffer) {
+                    if(dls.time > targetTime) {
+                        break;
+                    } else {
+                        last_dls = dls;
+                    }
+                }
+
+                string response = http_ok;
+                response += http_allow_origin;
+                response += http_contenttype_json;
+                response += http_nocache;
+                response += "\r\n";
+                std::ostringstream json;
+                json << "{ \"data\": " << std::quoted(last_dls.label) << " }";
+                response += json.str();
+                ssize_t ret = s.send(response.data(), response.size(), MSG_NOSIGNAL);
+                if (ret == -1) {
+                    cerr << "Failed to send dls data" << endl;
+                    return false;
+                }              
+
+                return true;
+            }
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << std::endl;
+        send_http_response(s, http_500, "500 Internal Server Error\r\nSomething went wrong\r\n");
+        return true;
     }
     return false;
 }
@@ -1292,48 +1428,6 @@ bool WebRadioInterface::send_buffered_audio_size(Socket& s, const std::string& s
                 ssize_t ret = s.send(response.data(), response.size(), MSG_NOSIGNAL);
                 if (ret == -1) {
                     cerr << "Failed to send buffered audio size" << endl;
-                    return false;
-                }              
-
-                return true;
-            }
-            catch (const out_of_range& e) {
-                cerr << "Could not setup mp3 sender for " <<
-                    srv.serviceId << ": " << e.what() << endl;
-
-                send_http_response(s, http_503, e.what());
-                return false;
-            }
-        }
-    }
-
-    return false;
-}
-
-bool WebRadioInterface::send_cached_dls_data(Socket& s, const std::string& stream, std::chrono::time_point<std::chrono::system_clock> targetTime) {
-    unique_lock<mutex> lock(rx_mut);
-    ASSERT_RX;
-    for (const auto& srv : rx->getServiceList()) {
-        if (rx->serviceHasAudioComponent(srv) and
-                (to_hex(srv.serviceId, 4) == stream or
-                (uint32_t)std::stoul(stream) == srv.serviceId)) {
-            try {
-                auto& ph = phs.at(srv.serviceId);
-
-                lock.unlock();
-
-                string label = ph.findClosestLabel(targetTime);
-                std::cout << "ooooooooooooo" << label << endl;
-
-                string response = http_ok;
-                response += http_allow_origin;
-                response += http_contenttype_json;
-                response += http_nocache;
-                response += "\r\n";
-                response += "{ \"data\": " + label + " }";
-                ssize_t ret = s.send(response.data(), response.size(), MSG_NOSIGNAL);
-                if (ret == -1) {
-                    cerr << "Failed to send dls data" << endl;
                     return false;
                 }              
 
@@ -1603,7 +1697,8 @@ const int sig_caught = 0;
 
 void WebRadioInterface::serve()
 {
-    deque<future<bool> > running_connections;
+    thread cache_dls_thread(&WebRadioInterface::cache_dls_data, this);
+    deque<future<bool>> running_connections;
 
 #if HAVE_SIGACTION
     struct sigaction sa = {};
@@ -1663,11 +1758,53 @@ void WebRadioInterface::serve()
         running_connections = move(still_running_connections);
     }
 
+    if (cache_dls_thread.joinable()) {
+        cache_dls_thread.join();
+    }
+
     cerr << "SERVE clear remaining data structures" << endl;
     phs.clear();
     programmes_being_decoded.clear();
     carousel_services_available.clear();
     carousel_services_active.clear();
+}
+
+const int AUDIO_BUFFER_LENGTH_MS = 1800000;
+const int DLS_CACHING_RATE_MS = 1000;
+
+// terminate called after throwing an instance of 'std::out_of_range'
+//   what():  map::at
+// Aborted (core dumped)
+void WebRadioInterface::cache_dls_data() {
+    while(running) {
+        unique_lock<mutex> lock(rx_mut);
+        for (const auto& srv : rx->getServiceList()) {
+             if (rx->serviceHasAudioComponent(srv)) {                
+                try {
+                    auto& ph = phs.at(srv.serviceId);
+
+                    if(AUDIO_BUFFER_LENGTH_MS / DLS_CACHING_RATE_MS <= ph.dlsDataBuffer.size()) {
+                        ph.dlsDataBuffer.pop_front();
+                    }
+
+
+                    auto mot = ph.getMOT();
+
+                    const auto& data = ph.getDLS();
+                    WebProgrammeHandler::dls_buffer_record record;
+                    record.label = data.label;
+                    record.time = std::chrono::system_clock::now();
+                    record.mot = mot;
+
+                    ph.dlsDataBuffer.push_back(record);
+                } catch (const std::exception& e) {
+                    cerr << "Error occurred during caching DLS data for service: " << srv.serviceId << ": " << e.what() << endl;
+                }
+             }
+        }
+        lock.unlock();
+        std::this_thread::sleep_for(std::chrono::milliseconds(DLS_CACHING_RATE_MS));
+    }
 }
 
 void WebRadioInterface::onSNR(float snr)

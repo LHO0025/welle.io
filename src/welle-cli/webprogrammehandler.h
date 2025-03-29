@@ -111,6 +111,7 @@ class WebProgrammeHandler : public ProgrammeHandlerInterface {
         std::chrono::time_point<std::chrono::system_clock> time_mot;
         std::chrono::time_point<std::chrono::system_clock> time_mot_change;
         std::vector<uint8_t> last_mot;
+        
         MOTType last_subtype = MOTType::Unknown;
 
         xpad_error_t xpad_error;
@@ -133,19 +134,14 @@ class WebProgrammeHandler : public ProgrammeHandlerInterface {
         void send_to_all_clients(const std::vector<uint8_t>& headerData, const std::vector<uint8_t>& data);
         void cache_mp3(const std::vector<uint8_t>& data);
         std::vector<uint8_t> getAudioBufferChunk(int);
+
         struct dls_t {
             std::string label;
             std::chrono::time_point<std::chrono::system_clock> time;
             std::chrono::time_point<std::chrono::system_clock> last_changed; };
         dls_t getDLS() const;
+        std::deque<dls_t> dls_buffer;
 
-        struct dls_buffer_record {
-            std::string label;
-            std::chrono::time_point<std::chrono::system_clock> time;
-        };
-
-        std::deque<dls_buffer_record> dlsDataBuffer;
-        
         std::string findClosestLabel(std::chrono::time_point<std::chrono::system_clock> targetTime);
         void cache_dls_data();
 
@@ -155,6 +151,14 @@ class WebProgrammeHandler : public ProgrammeHandlerInterface {
             std::chrono::time_point<std::chrono::system_clock> time;
             std::chrono::time_point<std::chrono::system_clock> last_changed; };
         mot_t getMOT() const;
+        std::deque<mot_t> mot_buffer;
+
+        struct dls_buffer_record {
+            std::string label;
+            std::chrono::time_point<std::chrono::system_clock> time;
+            mot_t mot;
+        };
+        std::deque<dls_buffer_record> dlsDataBuffer;
 
         xpad_error_t getXPADErrors() const;
         audiolevels_t getAudioLevels() const;

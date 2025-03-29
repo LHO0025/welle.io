@@ -26,7 +26,10 @@
 #include <iostream>
 #include <algorithm>
 #include <functional>
-
+#include <string>
+#include <deque>
+#include <chrono>
+#include <cmath>
 #include <lame/lame.h>
 
 using namespace std;
@@ -132,7 +135,7 @@ class LameEncoder : public IEncoder {
     bool process_interleaved(std::vector<int16_t>& audioData) override
     {
         vector<uint8_t> mp3buf(16384);
-
+    
         int written = lame_encode_buffer_interleaved(lame,
                 audioData.data(), audioData.size()/channels,
                 mp3buf.data(), mp3buf.size());
@@ -210,7 +213,7 @@ bool ProgrammeSender::send_stream(const std::vector<uint8_t>& headerdata, const 
 }
 
 bool ProgrammeSender::send_cached_stream(WebProgrammeHandler& webProgrammeHandler, ssize_t index) {
- cached_mp3_index = webProgrammeHandler.audioBuffer.size() - index - 1;
+    cached_mp3_index = webProgrammeHandler.audioBuffer.size() - index - 1;
 
     while (running) {
         if (!s.valid()) {
@@ -485,7 +488,6 @@ void WebProgrammeHandler::send_to_all_clients(const std::vector<uint8_t>& header
 
     for (auto& s : senders) {
         if(s->isLive){
-            std::cout << "KEKWWW" << endl;
             bool success = s->send_stream(headerData, data);
             if (not success) {
                 cerr << "Failed to send audio for " << serviceId << endl;
@@ -494,7 +496,6 @@ void WebProgrammeHandler::send_to_all_clients(const std::vector<uint8_t>& header
     }
 
     cache_mp3(data);
-    cache_dls_data();
 }
 
 void WebProgrammeHandler::onRsErrors(bool uncorrectedErrors, int numCorrectedErrors)
@@ -520,6 +521,9 @@ void WebProgrammeHandler::onNewDynamicLabel(const string& label)
     time_label = now;
     if (last_label != label) {
         time_label_change = now;
+
+        // TODO osetrit at neni memory leak !!!!!!!!!!1
+        dls_buffer.push_back({label, now});
     }
     last_label = label;
 }
@@ -530,10 +534,7 @@ void WebProgrammeHandler::onMOT(const mot_file_t& mot_file)
     last_mot_valid = true;
     const auto now = chrono::system_clock::now();
     time_mot = now;
-    if (last_mot != mot_file.data) {
-        time_mot_change = now;
-    }
-    last_mot = mot_file.data;
+
     if (mot_file.content_sub_type == 0x01) {
         last_subtype = MOTType::JPEG;
     }
@@ -543,6 +544,15 @@ void WebProgrammeHandler::onMOT(const mot_file_t& mot_file)
     else {
         last_subtype = MOTType::Unknown;
     }
+
+    if (last_mot != mot_file.data) {
+        time_mot_change = now;
+        
+
+        // TODO osetrit at neni memory leak !!!!!!
+        mot_buffer.push_back({mot_file.data, last_subtype, now});
+    }
+    last_mot = mot_file.data;
 }
 
 void WebProgrammeHandler::onPADLengthError(size_t announced_xpad_len, size_t xpad_len)
@@ -562,23 +572,49 @@ void WebProgrammeHandler::cache_dls_data() {
     // std::cout << std::chrono::system_clock::to_time_t(std::chrono::system_clock::now()) << endl;
 }
 
+// http://localhost:7979/cached_dls_data/0x2fb5/0
 std::string WebProgrammeHandler::findClosestLabel(std::chrono::time_point<std::chrono::system_clock> targetTime) {
-    if (dlsDataBuffer.empty()) {
-        std::cout << "SDASDASDAS" << endl;\
-        std::cout << this->dlsDataBuffer.size() << endl;
-        return ""; // Return empty string if buffer is empty
-    }
-    
-    auto closest = dlsDataBuffer.begin();
-    auto minDiff = std::chrono::duration<double>::max();
-    
-    for (auto it = dlsDataBuffer.begin(); it != dlsDataBuffer.end(); ++it) {
-        auto diff = std::chrono::duration_cast<std::chrono::duration<double>>(it->time - targetTime);
-        if (std::abs(diff.count()) < minDiff.count()) {
-            minDiff = diff;
-            closest = it;
+        // std::cout << "targetTime:" << targetTime << endl;
+
+        if (dlsDataBuffer.empty()) {
+            cout << "EMPTTY" << endl;
+            // Return an empty string if there are no records.
+            return "";
         }
-    }
-    
-    return closest->label;
+
+        int i = 0;
+        for(auto& record : this->dlsDataBuffer) {
+            cout << "label " << i << record.label << endl;
+
+            std::time_t time_t_value1 = std::chrono::system_clock::to_time_t(record.time);
+            std::cout << "Timestamp : " << time_t_value1 << std::endl;
+            i++;
+        }  
+
+        WebProgrammeHandler::dls_buffer_record closestRecord = dlsDataBuffer.front();
+
+        if(targetTime <= closestRecord.time) {
+            return closestRecord.label;
+        }
+
+        for(auto& record : this->dlsDataBuffer) {
+            cout << "label " << record.label << endl;
+            if(record.time <= targetTime) {
+                closestRecord = record;
+            } else {
+                break;
+            }
+        }        
+
+        // std::time_t time_t_value1 = std::chrono::system_clock::to_time_t(targetTime);
+        // std::cout << "Timestamp 1: " << time_t_value1 << std::endl;
+
+        // std::time_t time_t_value2 = std::chrono::system_clock::to_time_t(closestRecord.time);
+        // std::cout << "Timestamp 2: " << time_t_value2 << std::endl;
+
+
+        //1742817059
+        //1742817131
+
+    return closestRecord.label;
 }
