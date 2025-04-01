@@ -508,10 +508,10 @@ bool WebRadioInterface::dispatch_client(Socket&& client)
                 const regex regex_slide(R"(^[/]slide[/]([^ ]+))");
                 std::smatch match_slide;
 
-                const std::regex regex_buffered_slide(R"(^/buffered_slide\?sid=([^&]+)&timestamp=([^&]+)$)");
+                const std::regex regex_buffered_slide(R"(^/buffered_slide\?sid=([^&]+)&time=([^&]+)$)");
                 std::smatch match_buffered_slide;
 
-                const std::regex regex_buffered_dls(R"(^/buffered_dls\?sid=([^&]+)&timestamp=([^&]+)$)");
+                const std::regex regex_buffered_dls(R"(^/buffered_dls\?sid=([^&]+)&time=([^&]+)$)");
                 std::smatch match_buffered_dls;
 
                 const regex regex_stream(R"(^[/]stream[/]([^ ]+))");
@@ -522,7 +522,6 @@ bool WebRadioInterface::dispatch_client(Socket&& client)
 
                 if (decode_settings.outputCodec == OutputCodec::MP3)
                 {
-
                     const std::regex regex_buffered_audio_size(R"(^[/]buffer_size[/]([^ ]+))");
                     std::smatch match_buffered_audio_size;
                     if (regex_search(req.url, match_buffered_audio_size, regex_buffered_audio_size)) {
@@ -966,7 +965,6 @@ const int MAX_BUFFER_TIME_MS = 50000;
 
 bool WebRadioInterface::send_buffered_stream(Socket& s, const std::string& stream, const std::string& offsetMsStr)
 {
-
     unique_lock<mutex> lock(rx_mut);
     ASSERT_RX;
 
@@ -978,14 +976,17 @@ bool WebRadioInterface::send_buffered_stream(Socket& s, const std::string& strea
 
                 auto& ph = phs.at(srv.serviceId);
 
-
-                cout << "AAAAAAAAAAA RATE" << ph.rate << endl;
                 // double offsetSeconds = std::stod(offsetMsStr) / 1000;
                 // long long index = offsetSeconds * (ph.rate / 2); 
 
                 double offsetSeconds = std::stod(offsetMsStr) / 1000;
                 double index = offsetSeconds * (ph.rate / 2);
                 long long preciseIndex = std::round(index);
+
+                if(preciseIndex > ph.audioBuffer.size()) {
+                    cerr << "Index out of bounds" << endl;
+                    return false;
+                }
 
                 lock.unlock();
 
@@ -1014,8 +1015,6 @@ bool WebRadioInterface::send_buffered_stream(Socket& s, const std::string& strea
                 ph.registerSender(&sender);
                 check_decoders_required();
 
-
-                cout << "indexxxxxxxxxxxxxxxx " << index << endl;
                 sender.send_cached_stream(ph, preciseIndex);
                 
                 ph.removeSender(&sender);
@@ -1540,6 +1539,12 @@ bool WebRadioInterface::handle_channel_post(Socket& s, const std::string& channe
     cerr << "POST channel: " << channel << endl;
 
     retune(channel);
+
+    for(auto& ph : phs) {
+        ph.second.audioBuffer.clear();
+        ph.second.dls_buffer.clear();
+        ph.second.mot_buffer.clear();
+    }
 
     string response = http_ok;
     response += http_contenttype_text;
