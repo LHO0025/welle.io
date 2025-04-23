@@ -409,10 +409,14 @@ options_t parse_cmdline(int argc, char **argv)
     options.rro.decodeTII = true;
 
     int opt;
-    while ((opt = getopt(argc, argv, "A:c:C:dDf:F:g:hp:O:Ps:Tt:uvw:")) != -1) {
+    while ((opt = getopt(argc, argv, "A:c:C:dDf:F:g:hp:O:Ps:Tt:uvw:b:")) != -1) {
         switch (opt) {
             case 'A':
                 options.antenna = optarg;
+                break;
+            case 'b':
+                options.rro.audioBufferSeconds = std::atoi(optarg);
+                cout << "testik" << std::atoi(optarg) << endl;
                 break;
             case 'c':
                 options.channel = optarg;

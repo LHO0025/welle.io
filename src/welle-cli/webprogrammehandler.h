@@ -102,6 +102,8 @@ class WebProgrammeHandler : public ProgrammeHandlerInterface {
 
         errorcounters_t errorcounters;
 
+        int audioBufferMaxLen;
+
         bool last_label_valid = false;
         std::chrono::time_point<std::chrono::system_clock> time_label;
         std::chrono::time_point<std::chrono::system_clock> time_label_change;
@@ -123,7 +125,7 @@ class WebProgrammeHandler : public ProgrammeHandlerInterface {
         int rate = 0;
         std::string mode;
 
-        WebProgrammeHandler(uint32_t serviceId, OutputCodec codec);
+        WebProgrammeHandler(uint32_t serviceId, OutputCodec codec, long audioBufferMaxLen);
         WebProgrammeHandler(WebProgrammeHandler&& other);
         ~WebProgrammeHandler();
 

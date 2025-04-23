@@ -81,5 +81,7 @@ struct RadioReceiverOptions {
     // Which method to use for the freqsyncmethod used in the coarse corrector.
     // Has no effect when coarse corrector is disabled.
     FreqsyncMethod freqsyncMethod = FreqsyncMethod::PatternOfZeros;
+
+    double audioBufferSeconds;
 };
 

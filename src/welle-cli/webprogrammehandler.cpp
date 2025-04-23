@@ -34,12 +34,13 @@
 
 using namespace std;
 
+int maxAudioBufferLength = 0;
+
 #ifndef MSG_NOSIGNAL
 #define MSG_NOSIGNAL 0
 #endif
 
 constexpr int AUDIO_CHUNK_SIZE = 5000;
-constexpr int MAX_AUDIO_BUFFER_SIZE = 12600000;
 
 class IEncoder 
 {
@@ -264,18 +265,18 @@ bool ProgrammeSender::send_cached_stream(WebProgrammeHandler& webProgrammeHandle
 
 void WebProgrammeHandler::cache_mp3(const std::vector<uint8_t>& data) {
     std::unique_lock<std::mutex> mp3_lock(cached_mp3_mutex);
+
     int removed = 0;
     for (uint8_t value : data) {
-        if (this->audioBuffer.size() >= MAX_AUDIO_BUFFER_SIZE) {
+        if (this->audioBuffer.size() >= maxAudioBufferLength) {
             this->audioBuffer.pop_front();
             ++removed;
         }
         this->audioBuffer.push_back(value);
     }
+
     for (auto& s : senders) {
         if (!s->isLive) {
-            // Subtract only the number of samples actually removed, 
-            // ensuring we don’t underflow.
             s->cached_mp3_index = std::max(0, s->cached_mp3_index - removed);
         }
     }
@@ -296,14 +297,18 @@ void ProgrammeSender::cancel()
     running = false;
 }
 
-WebProgrammeHandler::WebProgrammeHandler(uint32_t serviceId, OutputCodec codecID) :
+WebProgrammeHandler::WebProgrammeHandler(uint32_t serviceId, OutputCodec codecID, long audioBufferMaxLen) :
     serviceId(serviceId), codec(codecID)
 {
     const auto now = chrono::system_clock::now();
+
+
     time_label = now;
     time_label_change = now;
     time_mot = now;
     time_mot_change = now;
+    this->audioBufferMaxLen = audioBufferMaxLen;
+    maxAudioBufferLength = audioBufferMaxLen;
 }
 
 WebProgrammeHandler::WebProgrammeHandler(WebProgrammeHandler&& other) :
@@ -432,7 +437,7 @@ void WebProgrammeHandler::onFrameErrors(int frameErrors)
 
 void WebProgrammeHandler::onNewAudio(std::vector<int16_t>&& audioData,
                 int sampleRate, const string& m)
-{
+{ 
     rate = sampleRate;
     mode = m;
 

@@ -253,6 +253,8 @@ void WebRadioInterface::retune(const std::string& channel)
     // Ensure two closely occurring retune() calls don't get stuck
     unique_lock<mutex> retune_lock(retune_mut);
 
+
+
     auto freq = channels.getFrequency(channel);
     if (freq == 0) {
         cerr << "RETUNE Invalid channel: " << channel << endl;
@@ -304,6 +306,8 @@ void WebRadioInterface::retune(const std::string& channel)
 
         time_rx_created = chrono::system_clock::now();
         rx->restart(false);
+
+        phs.clear();
 
         cerr << "RETUNE Start programme handler" << endl;
         running = true;
@@ -522,7 +526,7 @@ bool WebRadioInterface::dispatch_client(Socket&& client)
 
                 if (decode_settings.outputCodec == OutputCodec::MP3)
                 {
-                    const std::regex regex_buffered_audio_size(R"(^[/]buffer_size[/]([^ ]+))");
+                    const std::regex regex_buffered_audio_size(R"(^[/]playback_time[/]([^ ]+))");
                     std::smatch match_buffered_audio_size;
                     if (regex_search(req.url, match_buffered_audio_size, regex_buffered_audio_size)) {
                         success = send_buffered_audio_size(s, match_buffered_audio_size[1]);
@@ -976,9 +980,6 @@ bool WebRadioInterface::send_buffered_stream(Socket& s, const std::string& strea
 
                 auto& ph = phs.at(srv.serviceId);
 
-                // double offsetSeconds = std::stod(offsetMsStr) / 1000;
-                // long long index = offsetSeconds * (ph.rate / 2); 
-
                 double offsetSeconds = std::stod(offsetMsStr) / 1000;
                 double index = offsetSeconds * (ph.rate / 2);
                 long long preciseIndex = std::round(index);
@@ -999,6 +1000,7 @@ bool WebRadioInterface::send_buffered_stream(Socket& s, const std::string& strea
                     break;
                 case OutputCodec::MP3:
                     http_contenttype = http_contenttype_mp3;
+                    break;
                     break;
                 default:
                     break;
@@ -1418,12 +1420,14 @@ bool WebRadioInterface::send_buffered_audio_size(Socket& s, const std::string& s
 
                 lock.unlock();
 
+                double playbackTimeMs = (((double)ph.audioBuffer.size() / ((double) ph.rate * 2.0))) * 1000.0;
+
                 string response = http_ok;
                 response += http_allow_origin;
                 response += http_contenttype_json;
                 response += http_nocache;
                 response += "\r\n";
-                response += "{ \"bufferSize\": " + to_string(ph.audioBuffer.size()) + " }";
+                response += "{ \"playbackTimeMs\": " + to_string(playbackTimeMs) + " }";
                 ssize_t ret = s.send(response.data(), response.size(), MSG_NOSIGNAL);
                 if (ret == -1) {
                     cerr << "Failed to send buffered audio size" << endl;
@@ -1581,8 +1585,11 @@ void WebRadioInterface::handle_phs()
                 }
             }
 
+
+            long sampleCount = (rro.audioBufferSeconds) * 48000 * 2;
+
             if (phs.count(s.serviceId) == 0) {
-                WebProgrammeHandler ph(s.serviceId, decode_settings.outputCodec);
+                WebProgrammeHandler ph(s.serviceId, decode_settings.outputCodec, sampleCount);
                 phs.emplace(std::make_pair(s.serviceId, move(ph)));
             }
         }
