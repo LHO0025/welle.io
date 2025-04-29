@@ -981,7 +981,7 @@ bool WebRadioInterface::send_buffered_stream(Socket& s, const std::string& strea
                 auto& ph = phs.at(srv.serviceId);
 
                 double offsetSeconds = std::stod(offsetMsStr) / 1000;
-                double index = offsetSeconds * (ph.rate / 2);
+                double index = offsetSeconds * ((double) ph.rate / 2.0);
                 long long preciseIndex = std::round(index);
 
                 if(preciseIndex > ph.audioBuffer.size()) {
@@ -1585,7 +1585,6 @@ void WebRadioInterface::handle_phs()
                 }
             }
 
-
             long sampleCount = (rro.audioBufferSeconds) * 48000 * 2;
 
             if (phs.count(s.serviceId) == 0) {
@@ -1709,7 +1708,6 @@ const int sig_caught = 0;
 
 void WebRadioInterface::serve()
 {
-    thread cache_dls_thread(&WebRadioInterface::cache_dls_data, this);
     deque<future<bool>> running_connections;
 
 #if HAVE_SIGACTION
@@ -1768,10 +1766,6 @@ void WebRadioInterface::serve()
             }
         }
         running_connections = move(still_running_connections);
-    }
-
-    if (cache_dls_thread.joinable()) {
-        cache_dls_thread.join();
     }
 
     cerr << "SERVE clear remaining data structures" << endl;

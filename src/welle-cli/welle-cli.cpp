@@ -416,7 +416,6 @@ options_t parse_cmdline(int argc, char **argv)
                 break;
             case 'b':
                 options.rro.audioBufferSeconds = std::atoi(optarg);
-                cout << "testik" << std::atoi(optarg) << endl;
                 break;
             case 'c':
                 options.channel = optarg;

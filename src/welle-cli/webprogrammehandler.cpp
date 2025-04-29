@@ -34,7 +34,7 @@
 
 using namespace std;
 
-int maxAudioBufferLength = 0;
+int MAX_PLAYBACK_TIME_SECONDS = 0;
 
 #ifndef MSG_NOSIGNAL
 #define MSG_NOSIGNAL 0
@@ -263,12 +263,24 @@ bool ProgrammeSender::send_cached_stream(WebProgrammeHandler& webProgrammeHandle
 //     }
 // }
 
+void writeMP3ToFile(const std::vector<uint8_t>& mp3Data, const std::string& filename) {
+    std::ofstream outFile(filename, std::ios::binary);
+    if (!outFile) {
+        std::cerr << "Error opening file for writing: " << filename << std::endl;
+        return;
+    }
+
+    outFile.write(reinterpret_cast<const char*>(mp3Data.data()), mp3Data.size());
+    outFile.close();
+}
+
+
 void WebProgrammeHandler::cache_mp3(const std::vector<uint8_t>& data) {
     std::unique_lock<std::mutex> mp3_lock(cached_mp3_mutex);
 
     int removed = 0;
     for (uint8_t value : data) {
-        if (this->audioBuffer.size() >= maxAudioBufferLength) {
+        if (this->audioBuffer.size() >= MAX_PLAYBACK_TIME_SECONDS) {
             this->audioBuffer.pop_front();
             ++removed;
         }
@@ -280,7 +292,16 @@ void WebProgrammeHandler::cache_mp3(const std::vector<uint8_t>& data) {
             s->cached_mp3_index = std::max(0, s->cached_mp3_index - removed);
         }
     }
+
+    bool saved = false;
+    if(audioBuffer.size() > 825600 && !saved) {
+        std::vector<uint8_t> mp3Vector(this->audioBuffer.begin(), this->audioBuffer.end());
+        writeMP3ToFile(mp3Vector, "output.mp3");
+        saved = true;
+    }
+
 }
+
 
 
 void ProgrammeSender::wait_for_termination() const
@@ -302,13 +323,12 @@ WebProgrammeHandler::WebProgrammeHandler(uint32_t serviceId, OutputCodec codecID
 {
     const auto now = chrono::system_clock::now();
 
-
     time_label = now;
     time_label_change = now;
     time_mot = now;
     time_mot_change = now;
     this->audioBufferMaxLen = audioBufferMaxLen;
-    maxAudioBufferLength = audioBufferMaxLen;
+    MAX_PLAYBACK_TIME_SECONDS = audioBufferMaxLen;
 }
 
 WebProgrammeHandler::WebProgrammeHandler(WebProgrammeHandler&& other) :
@@ -530,6 +550,22 @@ void WebProgrammeHandler::onNewDynamicLabel(const string& label)
         // TODO osetrit at neni memory leak !!!!!!!!!!1
         dls_buffer.push_back({label, now});
     }
+
+    const auto threshold = now - std::chrono::seconds(MAX_PLAYBACK_TIME_SECONDS);
+
+    int toRemove = -1;
+    for (auto& record : dls_buffer) {
+       if(record.time < threshold) {
+            toRemove++;
+        } else {
+            break;
+        }
+    }
+
+    if(toRemove > 0) {
+        dls_buffer.erase(dls_buffer.begin(), dls_buffer.begin() + toRemove);
+    }
+
     last_label = label;
 }
 
@@ -557,6 +593,22 @@ void WebProgrammeHandler::onMOT(const mot_file_t& mot_file)
         // TODO osetrit at neni memory leak !!!!!!
         mot_buffer.push_back({mot_file.data, last_subtype, now});
     }
+
+    const auto threshold = now - std::chrono::seconds(MAX_PLAYBACK_TIME_SECONDS);
+
+    int toRemove = -1;
+    for (auto& record : mot_buffer) {
+       if(record.time < threshold) {
+            toRemove++;
+        } else {
+            break;
+        }
+    }
+
+    if(toRemove > 0) {
+        mot_buffer.erase(mot_buffer.begin(), mot_buffer.begin() + toRemove);
+    }
+
     last_mot = mot_file.data;
 }
 
@@ -582,7 +634,6 @@ std::string WebProgrammeHandler::findClosestLabel(std::chrono::time_point<std::c
         // std::cout << "targetTime:" << targetTime << endl;
 
         if (dlsDataBuffer.empty()) {
-            cout << "EMPTTY" << endl;
             // Return an empty string if there are no records.
             return "";
         }
@@ -610,16 +661,6 @@ std::string WebProgrammeHandler::findClosestLabel(std::chrono::time_point<std::c
                 break;
             }
         }        
-
-        // std::time_t time_t_value1 = std::chrono::system_clock::to_time_t(targetTime);
-        // std::cout << "Timestamp 1: " << time_t_value1 << std::endl;
-
-        // std::time_t time_t_value2 = std::chrono::system_clock::to_time_t(closestRecord.time);
-        // std::cout << "Timestamp 2: " << time_t_value2 << std::endl;
-
-
-        //1742817059
-        //1742817131
 
     return closestRecord.label;
 }
